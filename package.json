@@ -1,0 +1,22 @@
+{
+  "name": "patch-apply",
+  "version": "0.1.0",
+  "description": "Applies unified diffs to files with precise, line-and-column error messages when a hunk doesn't match.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "applydiff": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.10"
+  }
+}
