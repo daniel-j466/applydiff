@@ -43,12 +43,70 @@ function mismatchError(
   return new PatchError(message, targetPath, lineNumber, column);
 }
 
+function oldLinesOf(hunk: Hunk): string[] {
+  const lines: string[] = [];
+  for (const line of hunk.lines) {
+    if (line.kind === 'context' || line.kind === 'remove') lines.push(line.text);
+  }
+  return lines;
+}
+
+function matchesAt(lines: string[], pos: number, oldLines: string[]): boolean {
+  for (let k = 0; k < oldLines.length; k++) {
+    if (lines[pos + k] !== oldLines[k]) return false;
+  }
+  return true;
+}
+
+/**
+ * Looks for where a hunk's old-side lines actually occur, starting from its
+ * declared position and expanding outward one line at a time in both
+ * directions. Preceding hunks earlier in the same diff can shift a file's
+ * line numbers (added or removed lines change everything below them), so a
+ * later hunk's declared start is often off by exactly that amount; searching
+ * outward finds the nearest place the content actually lines up rather than
+ * requiring every hunk to be re-numbered by hand. Returns null if nothing
+ * within the file matches, in which case the caller falls back to the
+ * declared position to produce a precise mismatch error.
+ */
+function findShiftedPosition(
+  lines: string[],
+  minPos: number,
+  declaredPos: number,
+  oldLines: string[],
+): number | null {
+  if (oldLines.length === 0) {
+    return declaredPos >= minPos && declaredPos <= lines.length ? declaredPos : null;
+  }
+
+  const maxPos = lines.length - oldLines.length;
+  if (maxPos < minPos) return null;
+
+  const maxOffset = Math.max(declaredPos - minPos, maxPos - declaredPos);
+  for (let offset = 0; offset <= maxOffset; offset++) {
+    const forward = declaredPos + offset;
+    if (forward >= minPos && forward <= maxPos && matchesAt(lines, forward, oldLines)) {
+      return forward;
+    }
+    if (offset > 0) {
+      const backward = declaredPos - offset;
+      if (backward >= minPos && backward <= maxPos && matchesAt(lines, backward, oldLines)) {
+        return backward;
+      }
+    }
+  }
+
+  return null;
+}
+
 /**
  * Applies a parsed unified diff to the contents of a file, returning the
- * patched text. Hunks are applied in order and must match the target
- * exactly at the line numbers they declare — there is no fuzzy offset
- * search yet, so a shifted file will fail with a precise mismatch error
- * rather than silently applying in the wrong place.
+ * patched text. Hunks are applied in order. Each hunk is first tried at the
+ * line number it declares; if that doesn't match, nearby lines are searched
+ * for the same content before giving up, so a hunk shifted by earlier
+ * unrelated edits still applies instead of failing outright. Only when no
+ * matching position exists anywhere in the file does it report a precise
+ * mismatch error.
  */
 export function applyPatch(original: string, diff: ParsedDiff, targetPath: string): string {
   const hadTrailingNewline = original.endsWith('\n');
@@ -59,7 +117,9 @@ export function applyPatch(original: string, diff: ParsedDiff, targetPath: strin
   let cursor = 0; // 0-based index into originalLines
 
   for (const hunk of diff.hunks) {
-    const hunkStart = hunk.oldStart - 1;
+    const declaredStart = hunk.oldStart - 1;
+    const hunkStart =
+      findShiftedPosition(originalLines, cursor, declaredStart, oldLinesOf(hunk)) ?? declaredStart;
 
     if (hunkStart < cursor) {
       throw new PatchError(

@@ -96,10 +96,19 @@ No third-party runtime dependencies — the tool only uses Node's built-in
 `node:fs`. `typescript` and `@types/node` are devDependencies needed to
 compile it.
 
+## fuzzy matching
+
+Each hunk is first tried at the exact line number the diff declares. If
+that doesn't match, `applydiff` searches outward from that position, one
+line at a time in both directions, for the nearest spot where the hunk's
+context and removed lines line up exactly. This means a hunk still applies
+correctly when an earlier hunk in the same diff added or removed lines and
+shifted everything below it, without needing to renumber anything by hand.
+If no matching position exists anywhere in the file, it falls back to the
+declared position and reports the same precise mismatch shown above.
+
 ## limitations (for now)
 
-Hunks are matched at the exact line numbers the diff declares. There is no
-fuzzy searching for shifted content yet, so if the file has unrelated edits
-above the hunk that change its line count, you'll get a context mismatch
-even though the actual lines the hunk cares about are untouched. See the
-roadmap for where this is headed.
+The fuzzy search matches lines exactly; it doesn't tolerate whitespace
+differences or partial context matches within a hunk. See the roadmap for
+where this is headed.
