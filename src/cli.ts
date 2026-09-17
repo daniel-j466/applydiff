@@ -1,13 +1,19 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
-import { parseDiff, DiffParseError } from './parseDiff.js';
+import { parseDiff, DiffParseError, type FileDiff } from './parseDiff.js';
 import { applyPatch, PatchError } from './applyPatch.js';
 
 function usage(): string {
   return (
-    'usage: applydiff <target-file> <patch-file> [-o <output-file>]\n\n' +
-    'Applies a unified diff (as produced by `diff -u` or `git diff`) to <target-file>\n' +
-    'and writes the result to stdout, or to <output-file> if -o is given.'
+    'usage: applydiff <target-file> <patch-file> [-o <output-file>]\n' +
+    '       applydiff <patch-file> [-o <output-file>]\n\n' +
+    'Applies a unified diff (as produced by `diff -u` or `git diff`) to a file.\n\n' +
+    'With <target-file> and <patch-file>, applies a single-file patch to\n' +
+    '<target-file> and writes the result to stdout, or to <output-file> if -o\n' +
+    'is given.\n\n' +
+    'With only <patch-file>, each file the diff touches is patched in place\n' +
+    'at the path recorded in its own "+++" header, relative to the current\n' +
+    'directory. -o is only valid there if the patch touches a single file.'
   );
 }
 
@@ -24,6 +30,44 @@ function formatDiffParseError(err: DiffParseError): string {
     `${gutter}${err.sourceLine}\n` +
     `${pointer}`
   );
+}
+
+function readTarget(targetPath: string): string {
+  try {
+    return readFileSync(targetPath, 'utf8');
+  } catch (err) {
+    fail(`cannot read target file "${targetPath}": ${(err as Error).message}`);
+  }
+}
+
+function applyToExplicitTarget(targetPath: string, file: FileDiff, outputPath: string | undefined): void {
+  const original = readTarget(targetPath);
+  const patched = applyPatch(original, file.hunks, targetPath);
+  if (outputPath) {
+    writeFileSync(outputPath, patched, 'utf8');
+  } else {
+    process.stdout.write(patched);
+  }
+}
+
+function resolveOwnPath(file: FileDiff, patchPath: string): string {
+  const path = file.newPath ?? file.oldPath;
+  if (path === null) {
+    fail(
+      `patch file "${patchPath}" deletes a file (no path in its "+++" header), ` +
+        `which applydiff does not support.`,
+    );
+  }
+  return path;
+}
+
+function applyInPlace(file: FileDiff, patchPath: string, outputPath: string | undefined): void {
+  const targetPath = resolveOwnPath(file, patchPath);
+  const original = readTarget(targetPath);
+  const patched = applyPatch(original, file.hunks, targetPath);
+  const destination = outputPath ?? targetPath;
+  writeFileSync(destination, patched, 'utf8');
+  process.stdout.write(`patched ${targetPath}${outputPath ? ` -> ${outputPath}` : ''}\n`);
 }
 
 function main(argv: string[]): void {
@@ -44,18 +88,13 @@ function main(argv: string[]): void {
     }
   }
 
-  const [targetPath, patchPath] = positional;
-  if (!targetPath || !patchPath) {
+  if (positional.length < 1 || positional.length > 2) {
     fail(usage());
   }
+  const targetPath: string | undefined = positional.length === 2 ? positional[0] : undefined;
+  const patchPath: string = positional.length === 2 ? positional[1] : positional[0];
 
-  let original: string;
   let diffText: string;
-  try {
-    original = readFileSync(targetPath, 'utf8');
-  } catch (err) {
-    fail(`cannot read target file "${targetPath}": ${(err as Error).message}`);
-  }
   try {
     diffText = readFileSync(patchPath, 'utf8');
   } catch (err) {
@@ -64,11 +103,26 @@ function main(argv: string[]): void {
 
   try {
     const diff = parseDiff(diffText, patchPath);
-    const patched = applyPatch(original, diff, targetPath);
-    if (outputPath) {
-      writeFileSync(outputPath, patched, 'utf8');
+
+    if (targetPath) {
+      if (diff.files.length !== 1) {
+        fail(
+          `patch file "${patchPath}" touches ${diff.files.length} files, but a single ` +
+            `target file "${targetPath}" was given.\nOmit <target-file> to patch each ` +
+            `file in the diff at its own recorded path.`,
+        );
+      }
+      applyToExplicitTarget(targetPath, diff.files[0], outputPath);
     } else {
-      process.stdout.write(patched);
+      if (outputPath && diff.files.length !== 1) {
+        fail(
+          `-o requires a patch that touches exactly one file ` +
+            `(this one touches ${diff.files.length}).`,
+        );
+      }
+      for (const file of diff.files) {
+        applyInPlace(file, patchPath, outputPath);
+      }
     }
   } catch (err) {
     if (err instanceof DiffParseError) {

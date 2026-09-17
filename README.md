@@ -12,15 +12,16 @@ side by side trying to figure out which line moved. When the mismatch is a
 single trailing space or a tab that got turned into spaces, this can take
 longer than writing the fix would have.
 
-`applydiff` does one thing: it applies a unified diff to a single file, and
-when a hunk's context doesn't match the file, it shows you the exact line,
-the exact column of the first differing character, and a caret pointing at
-it.
+`applydiff` does one thing: it applies a unified diff to the file or files
+it touches, and when a hunk's context doesn't match, it shows you the exact
+line, the exact column of the first differing character, and a caret
+pointing at it.
 
 ## usage
 
 ```
 applydiff <target-file> <patch-file> [-o <output-file>]
+applydiff <patch-file> [-o <output-file>]
 ```
 
 Given `greet.js`:
@@ -95,6 +96,27 @@ node dist/cli.js <target-file> <patch-file>
 No third-party runtime dependencies — the tool only uses Node's built-in
 `node:fs`. `typescript` and `@types/node` are devDependencies needed to
 compile it.
+
+## multi-file patches
+
+A patch produced by `git diff` (or `diff -u` over several files) can contain
+one `---`/`+++`/hunk block per file. Give `applydiff` just the patch file,
+with no `<target-file>`, and it patches each file in place at the path
+recorded in its own `+++` header, relative to the current directory:
+
+```
+applydiff multi.diff
+```
+
+```
+patched src/greet.js
+patched src/farewell.js
+```
+
+`-o` still works, but only when the patch touches exactly one file, since it
+names a single destination. To patch a single-file diff against a file at a
+different path than the one recorded in the diff, pass `<target-file>`
+explicitly as in the single-file form above.
 
 ## fuzzy matching
 

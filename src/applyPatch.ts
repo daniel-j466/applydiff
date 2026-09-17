@@ -1,4 +1,4 @@
-import type { Hunk, ParsedDiff } from './parseDiff.js';
+import type { Hunk } from './parseDiff.js';
 
 export class PatchError extends Error {
   constructor(
@@ -100,15 +100,14 @@ function findShiftedPosition(
 }
 
 /**
- * Applies a parsed unified diff to the contents of a file, returning the
- * patched text. Hunks are applied in order. Each hunk is first tried at the
- * line number it declares; if that doesn't match, nearby lines are searched
- * for the same content before giving up, so a hunk shifted by earlier
- * unrelated edits still applies instead of failing outright. Only when no
- * matching position exists anywhere in the file does it report a precise
- * mismatch error.
+ * Applies a file's hunks (in order) to the contents of that file, returning
+ * the patched text. Each hunk is first tried at the line number it declares;
+ * if that doesn't match, nearby lines are searched for the same content
+ * before giving up, so a hunk shifted by earlier unrelated edits still
+ * applies instead of failing outright. Only when no matching position exists
+ * anywhere in the file does it report a precise mismatch error.
  */
-export function applyPatch(original: string, diff: ParsedDiff, targetPath: string): string {
+export function applyPatch(original: string, hunks: Hunk[], targetPath: string): string {
   const hadTrailingNewline = original.endsWith('\n');
   const originalLines = original.split('\n');
   if (hadTrailingNewline) originalLines.pop();
@@ -116,7 +115,7 @@ export function applyPatch(original: string, diff: ParsedDiff, targetPath: strin
   const resultLines: string[] = [];
   let cursor = 0; // 0-based index into originalLines
 
-  for (const hunk of diff.hunks) {
+  for (const hunk of hunks) {
     const declaredStart = hunk.oldStart - 1;
     const hunkStart =
       findShiftedPosition(originalLines, cursor, declaredStart, oldLinesOf(hunk)) ?? declaredStart;

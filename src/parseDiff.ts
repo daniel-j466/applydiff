@@ -17,8 +17,16 @@ export interface Hunk {
   lines: HunkLine[];
 }
 
-export interface ParsedDiff {
+export interface FileDiff {
+  /** Path from the "---" header, with a leading "a/" stripped, or null for "/dev/null". */
+  oldPath: string | null;
+  /** Path from the "+++" header, with a leading "b/" stripped, or null for "/dev/null". */
+  newPath: string | null;
   hunks: Hunk[];
+}
+
+export interface ParsedDiff {
+  files: FileDiff[];
 }
 
 export class DiffParseError extends Error {
@@ -36,10 +44,19 @@ export class DiffParseError extends Error {
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
+/** Strips the "a/" or "b/" prefix git diffs put on paths, and drops the trailing timestamp `diff -u` adds. */
+function parseHeaderPath(rest: string): string | null {
+  const path = rest.split('\t')[0].trimEnd();
+  if (path === '/dev/null') return null;
+  return /^[ab]\//.test(path) ? path.slice(2) : path;
+}
+
 /**
- * Parses a unified diff (as produced by `diff -u` or `git diff`) into hunks.
- * Only a single file's worth of hunks is expected; file header lines
- * (---, +++, diff, index) are recognized and skipped rather than parsed.
+ * Parses a unified diff (as produced by `diff -u` or `git diff`) into one or
+ * more per-file hunk lists. A "---"/"+++" pair starts a new file section;
+ * every hunk that follows belongs to that file until the next such pair.
+ * Diffs with no file header lines at all are treated as a single anonymous
+ * file, so bare hunks still work.
  */
 export function parseDiff(diffText: string, diffPath: string): ParsedDiff {
   const rawLines = diffText.split('\n');
@@ -47,21 +64,46 @@ export function parseDiff(diffText: string, diffPath: string): ParsedDiff {
     rawLines.pop();
   }
 
-  const hunks: Hunk[] = [];
+  const files: FileDiff[] = [];
+  let currentFile: FileDiff | null = null;
   let i = 0;
 
   while (i < rawLines.length) {
     const line = rawLines[i];
 
-    if (
-      line.trim() === '' ||
-      line.startsWith('---') ||
-      line.startsWith('+++') ||
-      line.startsWith('diff ') ||
-      line.startsWith('index ')
-    ) {
+    if (line.trim() === '' || line.startsWith('diff ') || line.startsWith('index ')) {
       i++;
       continue;
+    }
+
+    if (line.startsWith('--- ') || line === '---') {
+      const oldPath = parseHeaderPath(line.slice(3).trimStart());
+      const headerLineNo = i + 1;
+      i++;
+      if (i >= rawLines.length || !(rawLines[i].startsWith('+++ ') || rawLines[i] === '+++')) {
+        throw new DiffParseError(
+          'expected a "+++" line after "---"',
+          diffPath,
+          headerLineNo,
+          1,
+          line,
+        );
+      }
+      const newPath = parseHeaderPath(rawLines[i].slice(3).trimStart());
+      i++;
+      currentFile = { oldPath, newPath, hunks: [] };
+      files.push(currentFile);
+      continue;
+    }
+
+    if (line.startsWith('+++')) {
+      throw new DiffParseError(
+        'unexpected "+++" line without a preceding "---" line',
+        diffPath,
+        i + 1,
+        1,
+        line,
+      );
     }
 
     if (!line.startsWith('@@')) {
@@ -83,6 +125,12 @@ export function parseDiff(diffText: string, diffPath: string): ParsedDiff {
         1,
         line,
       );
+    }
+
+    if (!currentFile) {
+      // A bare diff with no "---"/"+++" headers at all; treat it as one unnamed file.
+      currentFile = { oldPath: null, newPath: null, hunks: [] };
+      files.push(currentFile);
     }
 
     const oldStart = Number(match[1]);
@@ -142,12 +190,12 @@ export function parseDiff(diffText: string, diffPath: string): ParsedDiff {
       i++;
     }
 
-    hunks.push({ oldStart, oldCount, newStart, newCount, headerLine, lines });
+    currentFile.hunks.push({ oldStart, oldCount, newStart, newCount, headerLine, lines });
   }
 
-  if (hunks.length === 0) {
+  if (files.length === 0) {
     throw new DiffParseError('no hunks found in diff', diffPath, 1, 1, rawLines[0] ?? '');
   }
 
-  return { hunks };
+  return { files };
 }
