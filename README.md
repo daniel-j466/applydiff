@@ -20,8 +20,8 @@ pointing at it.
 ## usage
 
 ```
-applydiff <target-file> <patch-file> [-o <output-file>]
-applydiff <patch-file> [-o <output-file>]
+applydiff <target-file> <patch-file> [-o <output-file>] [--reverse]
+applydiff <patch-file> [-o <output-file>] [--reverse]
 ```
 
 Given `greet.js`:
@@ -128,6 +128,21 @@ correctly when an earlier hunk in the same diff added or removed lines and
 shifted everything below it, without needing to renumber anything by hand.
 If no matching position exists anywhere in the file, it falls back to the
 declared position and reports the same precise mismatch shown above.
+
+## reversing a patch
+
+`--reverse` undoes a patch instead of applying it: lines the diff added are
+treated as lines to remove, and lines it removed are added back. This lets
+you run the exact same patch file against the already-patched result to get
+the original file back, without keeping a separate inverse diff around:
+
+```
+applydiff greet.js greet.diff -o greet.patched.js
+applydiff greet.patched.js greet.diff -o greet.js --reverse
+```
+
+Context mismatches are reported the same way as a forward apply, since a
+reversed hunk still has to line up with the file it's given.
 
 ## limitations (for now)
 

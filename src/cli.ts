@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseDiff, DiffParseError, type FileDiff } from './parseDiff.js';
-import { applyPatch, PatchError } from './applyPatch.js';
+import { applyPatch, reverseHunks, PatchError } from './applyPatch.js';
 
 function usage(): string {
   return (
-    'usage: applydiff <target-file> <patch-file> [-o <output-file>]\n' +
-    '       applydiff <patch-file> [-o <output-file>]\n\n' +
+    'usage: applydiff <target-file> <patch-file> [-o <output-file>] [--reverse]\n' +
+    '       applydiff <patch-file> [-o <output-file>] [--reverse]\n\n' +
     'Applies a unified diff (as produced by `diff -u` or `git diff`) to a file.\n\n' +
     'With <target-file> and <patch-file>, applies a single-file patch to\n' +
     '<target-file> and writes the result to stdout, or to <output-file> if -o\n' +
     'is given.\n\n' +
     'With only <patch-file>, each file the diff touches is patched in place\n' +
     'at the path recorded in its own "+++" header, relative to the current\n' +
-    'directory. -o is only valid there if the patch touches a single file.'
+    'directory. -o is only valid there if the patch touches a single file.\n\n' +
+    '--reverse undoes the patch: lines the diff added are removed and lines\n' +
+    'it removed are added back, so it applies cleanly to an already-patched\n' +
+    'file and reproduces the original.'
   );
 }
 
@@ -40,9 +43,15 @@ function readTarget(targetPath: string): string {
   }
 }
 
-function applyToExplicitTarget(targetPath: string, file: FileDiff, outputPath: string | undefined): void {
+function applyToExplicitTarget(
+  targetPath: string,
+  file: FileDiff,
+  outputPath: string | undefined,
+  reverse: boolean,
+): void {
   const original = readTarget(targetPath);
-  const patched = applyPatch(original, file.hunks, targetPath);
+  const hunks = reverse ? reverseHunks(file.hunks) : file.hunks;
+  const patched = applyPatch(original, hunks, targetPath);
   if (outputPath) {
     writeFileSync(outputPath, patched, 'utf8');
   } else {
@@ -61,10 +70,16 @@ function resolveOwnPath(file: FileDiff, patchPath: string): string {
   return path;
 }
 
-function applyInPlace(file: FileDiff, patchPath: string, outputPath: string | undefined): void {
+function applyInPlace(
+  file: FileDiff,
+  patchPath: string,
+  outputPath: string | undefined,
+  reverse: boolean,
+): void {
   const targetPath = resolveOwnPath(file, patchPath);
   const original = readTarget(targetPath);
-  const patched = applyPatch(original, file.hunks, targetPath);
+  const hunks = reverse ? reverseHunks(file.hunks) : file.hunks;
+  const patched = applyPatch(original, hunks, targetPath);
   const destination = outputPath ?? targetPath;
   writeFileSync(destination, patched, 'utf8');
   process.stdout.write(`patched ${targetPath}${outputPath ? ` -> ${outputPath}` : ''}\n`);
@@ -78,11 +93,14 @@ function main(argv: string[]): void {
   }
 
   let outputPath: string | undefined;
+  let reverse = false;
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '-o') {
       outputPath = args[i + 1];
       i++;
+    } else if (args[i] === '--reverse') {
+      reverse = true;
     } else {
       positional.push(args[i]);
     }
@@ -112,7 +130,7 @@ function main(argv: string[]): void {
             `file in the diff at its own recorded path.`,
         );
       }
-      applyToExplicitTarget(targetPath, diff.files[0], outputPath);
+      applyToExplicitTarget(targetPath, diff.files[0], outputPath, reverse);
     } else {
       if (outputPath && diff.files.length !== 1) {
         fail(
@@ -121,7 +139,7 @@ function main(argv: string[]): void {
         );
       }
       for (const file of diff.files) {
-        applyInPlace(file, patchPath, outputPath);
+        applyInPlace(file, patchPath, outputPath, reverse);
       }
     }
   } catch (err) {

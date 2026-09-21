@@ -51,6 +51,31 @@ function oldLinesOf(hunk: Hunk): string[] {
   return lines;
 }
 
+/**
+ * Swaps a hunk's old and new sides so applying it undoes the original edit:
+ * added lines become lines to remove, removed lines become lines to add, and
+ * the declared start/count pairs swap along with them. Context lines are
+ * unaffected since they're unchanged by the edit in either direction.
+ */
+function reverseHunk(hunk: Hunk): Hunk {
+  return {
+    oldStart: hunk.newStart,
+    oldCount: hunk.newCount,
+    newStart: hunk.oldStart,
+    newCount: hunk.oldCount,
+    headerLine: hunk.headerLine,
+    lines: hunk.lines.map((line) => {
+      if (line.kind === 'add') return { ...line, kind: 'remove' };
+      if (line.kind === 'remove') return { ...line, kind: 'add' };
+      return line;
+    }),
+  };
+}
+
+export function reverseHunks(hunks: Hunk[]): Hunk[] {
+  return hunks.map(reverseHunk);
+}
+
 function matchesAt(lines: string[], pos: number, oldLines: string[]): boolean {
   for (let k = 0; k < oldLines.length; k++) {
     if (lines[pos + k] !== oldLines[k]) return false;
