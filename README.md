@@ -20,8 +20,8 @@ pointing at it.
 ## usage
 
 ```
-applydiff <target-file> <patch-file> [-o <output-file>] [--reverse]
-applydiff <patch-file> [-o <output-file>] [--reverse]
+applydiff <target-file> <patch-file> [-o <output-file>] [--reverse] [--dry-run]
+applydiff <patch-file> [-o <output-file>] [--reverse] [--dry-run]
 ```
 
 Given `greet.js`:
@@ -143,6 +143,25 @@ applydiff greet.patched.js greet.diff -o greet.js --reverse
 
 Context mismatches are reported the same way as a forward apply, since a
 reversed hunk still has to line up with the file it's given.
+
+## checking without writing
+
+`--dry-run` runs the same matching `applydiff` would use to apply the patch,
+including fuzzy offset matching, but stops before writing anything or
+printing the patched content. It reports either that a file applies cleanly
+or the same precise context mismatch shown above:
+
+```
+applydiff greet.js greet.diff --dry-run
+```
+
+```
+greet.js: applies cleanly
+```
+
+This is useful for checking a patch is still applicable before committing
+to it, e.g. in a script that decides what to do based on the exit code.
+`-o` writes output, so it can't be combined with `--dry-run`.
 
 ## limitations (for now)
 

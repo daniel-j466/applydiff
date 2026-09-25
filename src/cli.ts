@@ -5,8 +5,8 @@ import { applyPatch, reverseHunks, PatchError } from './applyPatch.js';
 
 function usage(): string {
   return (
-    'usage: applydiff <target-file> <patch-file> [-o <output-file>] [--reverse]\n' +
-    '       applydiff <patch-file> [-o <output-file>] [--reverse]\n\n' +
+    'usage: applydiff <target-file> <patch-file> [-o <output-file>] [--reverse] [--dry-run]\n' +
+    '       applydiff <patch-file> [-o <output-file>] [--reverse] [--dry-run]\n\n' +
     'Applies a unified diff (as produced by `diff -u` or `git diff`) to a file.\n\n' +
     'With <target-file> and <patch-file>, applies a single-file patch to\n' +
     '<target-file> and writes the result to stdout, or to <output-file> if -o\n' +
@@ -16,7 +16,10 @@ function usage(): string {
     'directory. -o is only valid there if the patch touches a single file.\n\n' +
     '--reverse undoes the patch: lines the diff added are removed and lines\n' +
     'it removed are added back, so it applies cleanly to an already-patched\n' +
-    'file and reproduces the original.'
+    'file and reproduces the original.\n\n' +
+    '--dry-run checks that every hunk applies without writing anything or\n' +
+    'printing the patched content, so a mismatch can be caught before it\n' +
+    'touches the file.'
   );
 }
 
@@ -48,11 +51,14 @@ function applyToExplicitTarget(
   file: FileDiff,
   outputPath: string | undefined,
   reverse: boolean,
+  dryRun: boolean,
 ): void {
   const original = readTarget(targetPath);
   const hunks = reverse ? reverseHunks(file.hunks) : file.hunks;
   const patched = applyPatch(original, hunks, targetPath);
-  if (outputPath) {
+  if (dryRun) {
+    process.stdout.write(`${targetPath}: applies cleanly\n`);
+  } else if (outputPath) {
     writeFileSync(outputPath, patched, 'utf8');
   } else {
     process.stdout.write(patched);
@@ -75,11 +81,16 @@ function applyInPlace(
   patchPath: string,
   outputPath: string | undefined,
   reverse: boolean,
+  dryRun: boolean,
 ): void {
   const targetPath = resolveOwnPath(file, patchPath);
   const original = readTarget(targetPath);
   const hunks = reverse ? reverseHunks(file.hunks) : file.hunks;
   const patched = applyPatch(original, hunks, targetPath);
+  if (dryRun) {
+    process.stdout.write(`${targetPath}: applies cleanly\n`);
+    return;
+  }
   const destination = outputPath ?? targetPath;
   writeFileSync(destination, patched, 'utf8');
   process.stdout.write(`patched ${targetPath}${outputPath ? ` -> ${outputPath}` : ''}\n`);
@@ -94,6 +105,7 @@ function main(argv: string[]): void {
 
   let outputPath: string | undefined;
   let reverse = false;
+  let dryRun = false;
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '-o') {
@@ -101,6 +113,8 @@ function main(argv: string[]): void {
       i++;
     } else if (args[i] === '--reverse') {
       reverse = true;
+    } else if (args[i] === '--dry-run') {
+      dryRun = true;
     } else {
       positional.push(args[i]);
     }
@@ -108,6 +122,9 @@ function main(argv: string[]): void {
 
   if (positional.length < 1 || positional.length > 2) {
     fail(usage());
+  }
+  if (dryRun && outputPath) {
+    fail('--dry-run does not write output, so -o cannot be given with it.');
   }
   const targetPath: string | undefined = positional.length === 2 ? positional[0] : undefined;
   const patchPath: string = positional.length === 2 ? positional[1] : positional[0];
@@ -130,7 +147,7 @@ function main(argv: string[]): void {
             `file in the diff at its own recorded path.`,
         );
       }
-      applyToExplicitTarget(targetPath, diff.files[0], outputPath, reverse);
+      applyToExplicitTarget(targetPath, diff.files[0], outputPath, reverse, dryRun);
     } else {
       if (outputPath && diff.files.length !== 1) {
         fail(
@@ -139,7 +156,7 @@ function main(argv: string[]): void {
         );
       }
       for (const file of diff.files) {
-        applyInPlace(file, patchPath, outputPath, reverse);
+        applyInPlace(file, patchPath, outputPath, reverse, dryRun);
       }
     }
   } catch (err) {
